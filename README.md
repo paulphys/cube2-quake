@@ -1,4 +1,5 @@
-# Cube 2: Sauerbraten Fork [WIP]
+# Cube 2: Sauerbraten Fork
+> 2020 version
 
 ## Installation
 
@@ -18,6 +19,6 @@ sources to run it.
 
 Copyright © 2001-2020 Wouter van Oortmerssen, Lee Salzman, Mike Dysart, Robert Pointon, and Quinton Reeves
 
-Mod changes © 2020-2022 Hugo Locurcio (see Git history)
+Mod changes © 2020-2022 Hugo Locurcio
 
-Licensed under the Zlib license, see [LICENSE.txt](LICENSE.txt) for details.
+Licensed under the Zlib license, see [LICENSE.txt](src/readme_source.txt) for details.
