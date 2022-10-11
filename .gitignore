@@ -1,0 +1,19 @@
+# Not redistributable legally.
+# The player must download it from an external source.
+/packages
+
+# Compiled binaries and libraries.
+/sauerbraten.app
+/src/lib
+/src/lib64
+/src/sauer_client
+/src/sauer_server
+*.exe
+*.dll
+*.lib
+*.o
+*.a
+*.h.gch
+
+# HTML documentation which is already available on sauerbraten.org or in the SVN repository.
+/docs
