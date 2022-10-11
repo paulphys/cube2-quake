@@ -1,4 +1,4 @@
-# Strafe-jumping in Cube 2: Sauerbraten
+# Cube 2: Sauerbraten Fork [WIP]
 
 ## Installation
 
