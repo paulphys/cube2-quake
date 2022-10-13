@@ -1546,14 +1546,6 @@ void phystest()
 
 COMMAND(phystest, "");
 
-
-// Strafe jumping (air acceleration)
-// 
-// Resources: 
-// -  http://adrianb.io/2015/02/14/bunnyhop.html
-// -  https://youtu.be/v3zT3Z5apaM
-//
-
 void vecfromyawpitch(float yaw, float pitch, int move, int strafe, vec &m)
 {
     if(move)
@@ -1596,6 +1588,10 @@ FVAR(straferoll, 0, 0.03f, 90);
 FVAR(faderoll, 0, 0.95f, 1);
 VAR(floatspeed, 1, 100, 10000);
 
+VAR(airstrafe, 0, 1, 1);
+const float airstrafespeedratio = 30.0f /260.0f;
+const float bhoppenaltyexponent = 1.5f;
+
 
 void modifyvelocity(physent *pl, bool local, bool water, bool floating, int curtime)
 {
@@ -1624,7 +1620,9 @@ void modifyvelocity(physent *pl, bool local, bool water, bool floating, int curt
         }
     }
 
-    if(!floating && pl->physstate == PHYS_FALL) pl->timeinair = min(pl->timeinair + curtime, 1000);
+    if(!floating && pl->physstate == PHYS_FALL) {
+        pl->timeinair = min(pl->timeinair + curtime, 1000);
+    }
 
     vec m(0.0f, 0.0f, 0.0f);
 
@@ -1639,25 +1637,86 @@ void modifyvelocity(physent *pl, bool local, bool water, bool floating, int curt
             float dz = -(m.x*pl->floor.x + m.y*pl->floor.y)/pl->floor.z;
             m.z = water ? max(m.z, dz) : dz;
         }
-
+    
         m.normalize();
     }
 
     vec d(m);
     d.mul(pl->maxspeed);
+
     if(pl->type==ENT_PLAYER)
     {
         if(floating)
         {
             if(pl==player) d.mul(floatspeed/100.0f);
         }
-        else if(!water && allowmove) d.mul((pl->move && !pl->strafe ? 1.3f : 1.0f) * (pl->physstate < PHYS_SLOPE ? 1.3f : 1.0f));
+        else if(!water && allowmove){
+             d.mul((pl->move && !pl->strafe ? 1.3f : 1.0f) * (pl->physstate < PHYS_SLOPE ? 1.3f : 1.0f));
+        }
     }
     float fric = water && !floating ? 20.0f : (pl->physstate >= PHYS_SLOPE || floating ? 6.0f : 30.0f);
+
+
+// Strafe jumping logic (air acceleration)
+//
+// Resources:
+//  http://adrianb.io/2015/02/14/bunnyhop.html
+//  https://youtu.be/v3zT3Z5apaM
+//
+
+    const vec2 velocity = vec2(pl->vel.x, pl->vel.y);
+
+    // apply vanilla sauer movement
     pl->vel.lerp(d, pl->vel, pow(1 - 1/fric, curtime/20.0f));
+
+    // apply airstrafe physics if enabled and player is in air or briefly touches the ground while jump key pressed
+    if (airstrafe && pl->type==ENT_PLAYER && !water && !floating && (pl->physstate < PHYS_SLOPE || (pl->jumping && allowmove))){
+     
+        // wishdir already normalized from m vector
+        vec2 wishdir = vec2(m.x, m.y);
+        //conoutf(CON_INFO, "wishdir: %f", wishdir.x,wishdir.y);
+        vec2 velocitynormalized = vec2(velocity.x,velocity.y);
+        velocitynormalized.normalize();
+        vec2 nextvelocity = vec2(velocity.x,velocity.y);
+
+        // check if angle between velocity and wishdir is equal or greater than 90
+        if (!velocitynormalized.iszero() && !wishdir.iszero() && velocitynormalized.dot(wishdir) <= 0){
+
+            // adjust velocity direction to be orthogonal to wishdir
+            vec2 orthogonalvec = vec2(wishdir.y, -wishdir.x);
+
+            // orthogonalvec inversion if rotated to the wrong side
+            if (orthogonalvec.dot(velocitynormalized) <=0){
+                orthogonalvec.x *= -1;
+                orthogonalvec.y *= -1;
+            }
+
+            nextvelocity.x = orthogonalvec.x;
+            nextvelocity.y = orthogonalvec.y;
+            nextvelocity.mul(velocity.magnitude());
+
+            // apply velocity penalty based on angle between velocity and wishdir
+            const float angle = acosf(velocitynormalized.dot(wishdir));
+            conoutf(CON_INFO, "angle_vel-wish: %f", angle);
+            conoutf(CON_INFO, "speed: %f", nextvelocity.magnitude());
+            const float penalty = 1- pow(((angle - 0.5f * M_PI) * 2) / M_PI, bhoppenaltyexponent);
+            nextvelocity.mul(penalty);
+
+            // add scaled wishdir onto velocity
+            nextvelocity.add(wishdir.mul(pl->maxspeed * airstrafespeedratio));
+        }
+
+        // add wishdir if velocity is zero
+        else if (velocitynormalized.iszero() && !wishdir.iszero()){
+            nextvelocity.add(wishdir.mul(pl->maxspeed * airstrafespeedratio));
+        }
+
+        pl->vel.x = nextvelocity.x;
+        pl->vel.y = nextvelocity.y;
+        //conoutf(CON_INFO, "speed: %f", nextvelocity.magnitude());
+
+    }
 }
-
-
 
 void modifygravity(physent *pl, bool water, int curtime)
 {
