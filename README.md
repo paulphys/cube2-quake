@@ -1,9 +1,9 @@
-# Cube 2: Sauerbraten Fork
-> 2020 version
+# cube2-quake
+> cube2 fork with quake like strafe-jumping (air acceleration) mechanics
 
 ## Installation
 
-**No binaries are provided yet.** Therefore, you must build this project from
+**No binaries are provided.** Therefore, you must build this project from
 sources to run it.
 
 - Clone this repository
@@ -11,7 +11,7 @@ sources to run it.
   [Cube 2: Sauerbraten](http://sauerbraten.org) installation.
   (This must done because `packages/` can't legally be redistributed
   in modified versions of the game.)
-- Compile a client and server binary. On Linux, enter `make -C src install` in a terminal while in
+- Compile a client and server binary. On Linux, run `make -C src install` in a terminal while in
   the root folder of the cloned repository.
 - Run the game with `./sauerbraten_unix` in the root folder.
 
