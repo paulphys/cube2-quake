@@ -1584,14 +1584,14 @@ void vectoyawpitch(const vec &v, float &yaw, float &pitch)
 #define PHYSFRAMETIME 5
 
 VARP(maxroll, 0, 0, 20);
-FVAR(straferoll, 0, 0.03f, 90);
+FVAR(straferoll, 0, 0.033f, 90);
 FVAR(faderoll, 0, 0.95f, 1);
 VAR(floatspeed, 1, 100, 10000);
-
-VAR(airstrafe, 0, 1, 1);
-const float airstrafespeedratio = 30.0f /260.0f;
-const float bhoppenaltyexponent = 1.5f;
-
+VAR(playerspeed, 0, 0, -1);
+FVAR(circlemoveaccel, 0, 1.0f, 5); // 0 = vanilla cornering, 1.0 compensates sauer's cornering slowdown. this gives air control, kinda.
+FVAR(strafejumpaccel, 0, 2.0f, 10); // 0 = vanilla, disabled strafe jumping
+VAR(strafejumpwithcirclemovebonus, 0, 0, 1);
+VAR(strafejumprequiremovekey, 0, 0, 1);
 
 void modifyvelocity(physent *pl, bool local, bool water, bool floating, int curtime)
 {
@@ -1602,7 +1602,6 @@ void modifyvelocity(physent *pl, bool local, bool water, bool floating, int curt
         {
             pl->jumping = false;
             pl->vel.z = max(pl->vel.z, JUMPVEL);
-
         }
     }
     else if(pl->physstate >= PHYS_SLOPE || water)
@@ -1611,111 +1610,71 @@ void modifyvelocity(physent *pl, bool local, bool water, bool floating, int curt
         if(pl->jumping && allowmove)
         {
             pl->jumping = false;
+            pl->jumped = true;
 
             pl->vel.z = max(pl->vel.z, JUMPVEL); // physics impulse upwards
-
             if(water) { pl->vel.x /= 8.0f; pl->vel.y /= 8.0f; } // dampen velocity change even harder, gives correct water feel
 
             game::physicstrigger(pl, local, 1, 0);
         }
     }
-
-    if(!floating && pl->physstate == PHYS_FALL) {
-        pl->timeinair = min(pl->timeinair + curtime, 1000);
-    }
+    if(!floating && pl->physstate == PHYS_FALL) pl->timeinair = min(pl->timeinair + curtime, 1000);
 
     vec m(0.0f, 0.0f, 0.0f);
-
-    if((pl->move || pl->strafe) && allowmove)
+    if((pl->move || pl->strafe || pl->vertical) && allowmove)
     {
-        vecfromyawpitch(pl->yaw, floating || water || pl->type==ENT_CAMERA ? pl->pitch : 0, pl->move, pl->strafe, m);
+        bool allowvertical = !pl->hovering && (floating || water || pl->type==ENT_CAMERA);
+        vecfromyawpitch(pl->yaw, allowvertical ? pl->pitch : 0, pl->move, pl->strafe, pl->vertical, m);
+
         if(!floating && pl->physstate >= PHYS_SLOPE)
-        {            
+        {
             /* move up or down slopes in air
              * but only move up slopes in water
              */
             float dz = -(m.x*pl->floor.x + m.y*pl->floor.y)/pl->floor.z;
             m.z = water ? max(m.z, dz) : dz;
         }
-    
+
         m.normalize();
     }
 
-    vec d(m);
+    vec d = vec(m);
     d.mul(pl->maxspeed);
-
     if(pl->type==ENT_PLAYER)
     {
         if(floating)
         {
             if(pl==player) d.mul(floatspeed/100.0f);
         }
-        else if(!water && allowmove){
-             d.mul((pl->move && !pl->strafe ? 1.3f : 1.0f) * (pl->physstate < PHYS_SLOPE ? 1.3f : 1.0f));
-        }
-    }
-    float fric = water && !floating ? 20.0f : (pl->physstate >= PHYS_SLOPE || floating ? 6.0f : 30.0f);
+        else if(!water && allowmove)
+        {
+            float nostrafebonus = pl->move && !pl->strafe ? 1.3f : 1.0f;
+            float fallslidebonus = pl->physstate < PHYS_SLOPE ? 1.3f : 1.0f;
+            d.mul(nostrafebonus * fallslidebonus);
 
+            // Quake 3 style circle walk and strafe jumping bonus, based on https://github.com/id-Software/Quake-III-Arena/blob/dbe4ddb10315479fc00086f08e25d968b4b43c49/code/game/bg_pmove.c#L240
+            float maxspeed = pl->maxspeed * nostrafebonus * fallslidebonus;
+            vec playervel = vec(pl->vel.x, pl->vel.y, 0);
+            float projspeed = playervel.dot2(m);
+            float addspeed = clamp(maxspeed-projspeed, 0.0f, maxspeed);
 
-// Strafe jumping logic (air acceleration)
-//
-// Resources:
-//  http://adrianb.io/2015/02/14/bunnyhop.html
-//  https://youtu.be/v3zT3Z5apaM
-//
+            // circle move bonus scales up the player's inputs
+            vec circlemovebonus = vec(m).mul(addspeed*circlemoveaccel);
+            d.add(circlemovebonus);
 
-    const vec2 velocity = vec2(pl->vel.x, pl->vel.y);
-
-    // apply vanilla sauer movement
-    pl->vel.lerp(d, pl->vel, pow(1 - 1/fric, curtime/20.0f));
-
-    // apply airstrafe physics if enabled and player is in air or briefly touches the ground while jump key pressed
-    if (airstrafe && pl->type==ENT_PLAYER && !water && !floating && (pl->physstate < PHYS_SLOPE || (pl->jumping && allowmove))){
-     
-        // wishdir already normalized from m vector
-        vec2 wishdir = vec2(m.x, m.y);
-        //conoutf(CON_INFO, "wishdir: %f", wishdir.x,wishdir.y);
-        vec2 velocitynormalized = vec2(velocity.x,velocity.y);
-        velocitynormalized.normalize();
-        vec2 nextvelocity = vec2(velocity.x,velocity.y);
-
-        // check if angle between velocity and wishdir is equal or greater than 90
-        if (!velocitynormalized.iszero() && !wishdir.iszero() && velocitynormalized.dot(wishdir) <= 0){
-
-            // adjust velocity direction to be orthogonal to wishdir
-            vec2 orthogonalvec = vec2(wishdir.y, -wishdir.x);
-
-            // orthogonalvec inversion if rotated to the wrong side
-            if (orthogonalvec.dot(velocitynormalized) <=0){
-                orthogonalvec.x *= -1;
-                orthogonalvec.y *= -1;
+            if(pl->physstate==PHYS_FALL && pl->strafe && (!strafejumprequiremovekey || pl->move))
+            {
+                // strafe jumping bonus scales up the player's existing velocity
+                vec strafejumpbonus = m.mul(addspeed*strafejumpaccel);
+                d = playervel.add(strafejumpbonus); // override d entirely
+                if(strafejumpwithcirclemovebonus) d.add(circlemovebonus);
             }
-
-            nextvelocity.x = orthogonalvec.x;
-            nextvelocity.y = orthogonalvec.y;
-            nextvelocity.mul(velocity.magnitude());
-
-            // apply velocity penalty based on angle between velocity and wishdir
-            const float angle = acosf(velocitynormalized.dot(wishdir));
-            conoutf(CON_INFO, "angle_vel-wish: %f", angle);
-            conoutf(CON_INFO, "speed: %f", nextvelocity.magnitude());
-            const float penalty = 1- pow(((angle - 0.5f * M_PI) * 2) / M_PI, bhoppenaltyexponent);
-            nextvelocity.mul(penalty);
-
-            // add scaled wishdir onto velocity
-            nextvelocity.add(wishdir.mul(pl->maxspeed * airstrafespeedratio));
         }
-
-        // add wishdir if velocity is zero
-        else if (velocitynormalized.iszero() && !wishdir.iszero()){
-            nextvelocity.add(wishdir.mul(pl->maxspeed * airstrafespeedratio));
-        }
-
-        pl->vel.x = nextvelocity.x;
-        pl->vel.y = nextvelocity.y;
-        //conoutf(CON_INFO, "speed: %f", nextvelocity.magnitude());
-
     }
+
+    float fric = water && !floating ? 20.0f : (pl->physstate >= PHYS_SLOPE || floating ? 6.0f : 30.0f);
+    pl->vel.lerp(d, pl->vel, pow(1 - 1/fric, curtime/20.0f));
+    playerspeed = int(pl->vel.magnitude2());
 }
 
 void modifygravity(physent *pl, bool water, int curtime)
